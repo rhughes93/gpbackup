@@ -14,17 +14,15 @@ var (
 	tableDelim = ","
 )
 
-func CopyTableIn(connection *utils.DBConn, tableName string, tableAttributes string, backupFile string, singleDataFile bool, oid uint32) {
+func CopyTableIn(connection *utils.DBConn, tableName string, tableAttributes string, backupFile string, singleDataFile bool, oid uint32, prevOid uint32) {
 	usingCompression, compressionProgram := utils.GetCompressionParameters()
 	tocFile := globalCluster.GetSegmentTOCFilePath("<SEG_DATA_DIR>", "<SEGID>")
-	helperCommand := fmt.Sprintf("$GPHOME/bin/gpbackup_helper --restore --toc-file=%s --oid=%d", tocFile, oid)
 	copyCommand := ""
-	if singleDataFile && usingCompression {
-		copyCommand = fmt.Sprintf("PROGRAM 'set -o pipefail; %s %s | %s'", compressionProgram.DecompressCommand, backupFile, helperCommand)
+	if singleDataFile {
+		helperCommand := fmt.Sprintf("$GPHOME/bin/gpbackup_helper --restore --toc-file=%s --oid=%d --previous-oid=%d --content=<SEGID>", tocFile, oid, prevOid)
+		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", helperCommand, backupFile)
 	} else if usingCompression {
 		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", compressionProgram.DecompressCommand, backupFile)
-	} else if singleDataFile {
-		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", helperCommand, backupFile)
 	} else {
 		copyCommand = fmt.Sprintf("'%s'", backupFile)
 	}

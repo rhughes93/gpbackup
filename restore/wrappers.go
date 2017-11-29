@@ -128,7 +128,7 @@ func setGUCsForConnection() {
 	utils.CheckError(err)
 }
 
-func restoreSingleTableData(entry utils.MasterDataEntry, tableNum uint32, totalTables int) {
+func restoreSingleTableData(entry utils.MasterDataEntry, tableNum uint32, totalTables int, prevEntryOid uint32) {
 	name := utils.MakeFQN(entry.Schema, entry.Name)
 	if logger.GetVerbosity() > utils.LOGINFO {
 		// No progress bar at this log level, so we note table count here
@@ -136,6 +136,11 @@ func restoreSingleTableData(entry utils.MasterDataEntry, tableNum uint32, totalT
 	} else {
 		logger.Verbose("Reading data for table %s from file", name)
 	}
-	backupFile := globalCluster.GetTableBackupFilePathForCopyCommand(entry.Oid, backupConfig.SingleDataFile)
-	CopyTableIn(connection, name, entry.AttributeString, backupFile, backupConfig.SingleDataFile, entry.Oid)
+	backupFile := ""
+	if backupConfig.SingleDataFile {
+		backupFile = globalCluster.GetSegmentPipePathForCopyCommand()
+	} else {
+		backupFile = globalCluster.GetTableBackupFilePathForCopyCommand(entry.Oid, backupConfig.SingleDataFile)
+	}
+	CopyTableIn(connection, name, entry.AttributeString, backupFile, backupConfig.SingleDataFile, entry.Oid, prevEntryOid)
 }

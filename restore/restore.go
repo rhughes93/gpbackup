@@ -148,6 +148,10 @@ func restoreData() {
 	if backupConfig.SingleDataFile {
 		globalCluster.CopySegmentTOCs()
 		defer globalCluster.CleanUpSegmentTOCs()
+		globalCluster.CreateTablePipesOnAllHosts()
+		defer globalCluster.CleanUpTablePipesOnAllHosts()
+		globalCluster.WriteToSegmentPipes()
+		defer globalCluster.CleanUpSegmentTailProcesses()
 	}
 	setParallelRestore()
 	defer setSerialRestore()
@@ -160,9 +164,11 @@ func restoreData() {
 
 	if *numJobs == 1 {
 		setGUCsForConnection()
+		prevEntryOid := uint32(0)
 		for i, entry := range filteredMasterDataEntries {
-			restoreSingleTableData(entry, uint32(i)+1, totalTables)
+			restoreSingleTableData(entry, uint32(i)+1, totalTables, prevEntryOid)
 			dataProgressBar.Increment()
+			prevEntryOid = entry.Oid
 		}
 	} else {
 		var tableNum uint32 = 1
@@ -173,7 +179,7 @@ func restoreData() {
 			go func() {
 				setGUCsForConnection()
 				for entry := range tasks {
-					restoreSingleTableData(entry, tableNum, totalTables)
+					restoreSingleTableData(entry, tableNum, totalTables, 0)
 					atomic.AddUint32(&tableNum, 1)
 					dataProgressBar.Increment()
 				}

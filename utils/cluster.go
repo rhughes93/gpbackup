@@ -204,6 +204,113 @@ func (cluster *Cluster) CreateBackupDirectoriesOnAllHosts() {
 	cluster.LogFatalError("Unable to create directories", numErrors)
 }
 
+func (cluster *Cluster) CreateTablePipesOnAllHosts() {
+	logger.Verbose("Creating table data pipes")
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		return fmt.Sprintf("mkfifo %s", cluster.GetSegmentPipeFilePath(contentID))
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID := range errMap {
+		logger.Verbose("Unable to create table data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	}
+	cluster.LogFatalError("Unable to create table data pipes", numErrors)
+}
+
+func (cluster *Cluster) CleanUpTablePipesOnAllHosts() {
+	logger.Verbose("Cleaning up table data pipes")
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		pipePath := cluster.GetSegmentPipeFilePath(contentID)
+		return fmt.Sprintf("rm -f %s && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9", pipePath, pipePath)
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID := range errMap {
+		logger.Verbose("Unable to clean up table data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	}
+	cluster.LogFatalError("Unable to clean up table data pipes", numErrors)
+}
+
+func (cluster *Cluster) ReadFromSegmentPipes() {
+	logger.Verbose("Reading from segment data pipes")
+	usingCompression, compressionProgram := GetCompressionParameters()
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
+		compress := compressionProgram.CompressCommand
+		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
+		if usingCompression {
+			return fmt.Sprintf("set -o pipefail; nohup tail -n +1 -f %s | %s > %s &", pipeFile, compress, backupFile)
+		}
+		return fmt.Sprintf("nohup tail -n +1 -f %s > %s &", pipeFile, backupFile)
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID := range errMap {
+		logger.Verbose("Unable to read from data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	}
+	cluster.LogFatalError("Unable to read from segment data pipes", numErrors)
+}
+
+func (cluster *Cluster) CleanUpSegmentTailProcesses() {
+	logger.Verbose("Cleaning up segment tail processes")
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		filePattern := fmt.Sprintf("gpbackup_%d_%s", contentID, cluster.Timestamp) // Matches pipe name for backup and file name for restore
+		return fmt.Sprintf(`ps ux | grep "tail -n +1 -f" | grep "%s" | grep -v "grep" | awk '{print $2}' | xargs kill -9`, filePattern)
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID, err := range errMap {
+		logger.Verbose("Unable to clean up tail process for segment %d on host %s: %s", contentID, cluster.GetHostForContent(contentID), err.Error())
+	}
+	cluster.LogFatalError("Unable to clean up tail processes", numErrors)
+}
+
+func (cluster *Cluster) WriteToSegmentPipes() {
+	logger.Verbose("Writing to segment data pipes")
+	usingCompression, compressionProgram := GetCompressionParameters()
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
+		decompress := compressionProgram.DecompressCommand
+		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
+		/*
+		 * These commands are more complicated than those in ReadFromSegmentPipes
+		 * because in the Read case ssh exits immediately given that there is
+		 * nothing in the pipe yet while in this case the ssh session will try
+		 * to continue until the file is tailed, so we need to redirect all input
+		 * and output that nohup and sh aren't using here.
+		 *
+		 * We also need to ignore any SIGPIPE that the tail command receives so that
+		 * it continues writing to the pipe after the first COPY command closes it
+		 * for reading.
+		 */
+		if usingCompression {
+			return fmt.Sprintf(`sh -c "nohup sh -c \"(set -o pipefail; trap '' PIPE; tail -n +1 -f %s | %s) > %s < /dev/null 2>/dev/null &\"" < /dev/null > /dev/null 2>&1`, backupFile, decompress, pipeFile)
+		}
+		return fmt.Sprintf(`sh -c "nohup sh -c \"(trap '' PIPE; tail -n +1 -f %s) > %s < /dev/null 2>/dev/null &\"" < /dev/null > /dev/null 2>&1`, backupFile, pipeFile)
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID := range errMap {
+		logger.Verbose("Unable to write to data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	}
+	cluster.LogFatalError("Unable to write to segment data pipes", numErrors)
+}
+
 func (cluster *Cluster) MoveSegmentTOCsAndMakeReadOnly() {
 	logger.Verbose("Setting permissions on segment table of contents files")
 	logger.Verbose("Moving segment table of contents files to user-specified backup directory")
@@ -226,12 +333,12 @@ func (cluster *Cluster) MoveSegmentTOCsAndMakeReadOnly() {
 }
 
 func (cluster *Cluster) CopySegmentTOCs() {
-	logger.Verbose("Copying segment table of contents files to segment data directories")
+	logger.Verbose("Copying segment table of contents files from backup directories")
 	var commandMap map[int][]string
 	commandMap = cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		tocFile := cluster.GetSegmentTOCFilePath(cluster.SegDirMap[contentID], fmt.Sprintf("%d", contentID))
 		tocFilename := fmt.Sprintf("gpbackup_%d_%s_toc.yaml", contentID, cluster.Timestamp)
-		str := fmt.Sprintf("cp %s/%s %s", cluster.GetDirForContent(contentID), tocFilename, tocFile)
+		str := fmt.Sprintf("cp -f %s/%s %s", cluster.GetDirForContent(contentID), tocFilename, tocFile)
 		return str
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
@@ -241,9 +348,9 @@ func (cluster *Cluster) CopySegmentTOCs() {
 	}
 	for contentID := range errMap {
 		tocFile := cluster.GetSegmentTOCFilePath(cluster.SegDirMap[contentID], fmt.Sprintf("%d", contentID))
-		logger.Verbose("Unable to move file %s on segment %d on host %s", tocFile, contentID, cluster.GetHostForContent(contentID))
+		logger.Verbose("Unable to copy file %s on segment %d on host %s", tocFile, contentID, cluster.GetHostForContent(contentID))
 	}
-	cluster.LogFatalError("Unable to move segment table of contents files to segment data directories", numErrors)
+	cluster.LogFatalError("Unable to copy segment table of contents files from backup directories", numErrors)
 }
 
 func (cluster *Cluster) CleanUpSegmentTOCs() {
@@ -290,10 +397,23 @@ func (cluster *Cluster) GetDirForContent(contentID int) string {
 	return path.Join(cluster.SegDirMap[contentID], "backups", cluster.Timestamp[0:8], cluster.Timestamp)
 }
 
-func (cluster *Cluster) GetTableBackupFilePath(contentID int, tableOid uint32, singleDataFile bool) string {
-	templateFilePath := cluster.GetTableBackupFilePathForCopyCommand(tableOid, singleDataFile)
+func (cluster *Cluster) replaceCopyFormatStringsInPath(templateFilePath string, contentID int) string {
 	filePath := strings.Replace(templateFilePath, "<SEG_DATA_DIR>", cluster.SegDirMap[contentID], -1)
 	return strings.Replace(filePath, "<SEGID>", strconv.Itoa(contentID), -1)
+}
+
+func (cluster *Cluster) GetSegmentPipeFilePath(contentID int) string {
+	templateFilePath := cluster.GetSegmentPipePathForCopyCommand()
+	return cluster.replaceCopyFormatStringsInPath(templateFilePath, contentID)
+}
+
+func (cluster *Cluster) GetSegmentPipePathForCopyCommand() string {
+	return fmt.Sprintf("<SEG_DATA_DIR>/gpbackup_<SEGID>_%s_pipe", cluster.Timestamp)
+}
+
+func (cluster *Cluster) GetTableBackupFilePath(contentID int, tableOid uint32, singleDataFile bool) string {
+	templateFilePath := cluster.GetTableBackupFilePathForCopyCommand(tableOid, singleDataFile)
+	return cluster.replaceCopyFormatStringsInPath(templateFilePath, contentID)
 }
 
 func (cluster *Cluster) GetTableBackupFilePathForCopyCommand(tableOid uint32, singleDataFile bool) string {
