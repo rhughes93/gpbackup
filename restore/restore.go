@@ -148,8 +148,8 @@ func restoreData() {
 	if backupConfig.SingleDataFile {
 		globalCluster.CopySegmentTOCs()
 		defer globalCluster.CleanUpSegmentTOCs()
-		globalCluster.CreateTablePipesOnAllHosts()
-		defer globalCluster.CleanUpTablePipesOnAllHosts()
+		globalCluster.CreateSegmentPipesOnAllHosts()
+		defer globalCluster.CleanUpSegmentPipesOnAllHosts()
 		globalCluster.WriteToSegmentPipes()
 		defer globalCluster.CleanUpSegmentTailProcesses()
 	}

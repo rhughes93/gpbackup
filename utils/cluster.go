@@ -204,8 +204,8 @@ func (cluster *Cluster) CreateBackupDirectoriesOnAllHosts() {
 	cluster.LogFatalError("Unable to create directories", numErrors)
 }
 
-func (cluster *Cluster) CreateTablePipesOnAllHosts() {
-	logger.Verbose("Creating table data pipes")
+func (cluster *Cluster) CreateSegmentPipesOnAllHosts() {
+	logger.Verbose("Creating segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		return fmt.Sprintf("mkfifo %s", cluster.GetSegmentPipeFilePath(contentID))
 	})
@@ -215,16 +215,16 @@ func (cluster *Cluster) CreateTablePipesOnAllHosts() {
 		return
 	}
 	for contentID := range errMap {
-		logger.Verbose("Unable to create table data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+		logger.Verbose("Unable to create segment data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
 	}
-	cluster.LogFatalError("Unable to create table data pipes", numErrors)
+	cluster.LogFatalError("Unable to create segment data pipes", numErrors)
 }
 
-func (cluster *Cluster) CleanUpTablePipesOnAllHosts() {
-	logger.Verbose("Cleaning up table data pipes")
+func (cluster *Cluster) CleanUpSegmentPipesOnAllHosts() {
+	logger.Verbose("Cleaning up segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		pipePath := cluster.GetSegmentPipeFilePath(contentID)
-		return fmt.Sprintf("rm -f %s && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9", pipePath, pipePath)
+		return fmt.Sprintf("rm -f %s* && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9", pipePath, pipePath)
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
 	numErrors := len(errMap)
@@ -232,9 +232,9 @@ func (cluster *Cluster) CleanUpTablePipesOnAllHosts() {
 		return
 	}
 	for contentID := range errMap {
-		logger.Verbose("Unable to clean up table data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+		logger.Verbose("Unable to clean up segment data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
 	}
-	cluster.LogFatalError("Unable to clean up table data pipes", numErrors)
+	cluster.LogFatalError("Unable to clean up segment data pipes", numErrors)
 }
 
 func (cluster *Cluster) ReadFromSegmentPipes() {
@@ -284,6 +284,7 @@ func (cluster *Cluster) WriteToSegmentPipes() {
 		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
 		decompress := compressionProgram.DecompressCommand
 		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
+		tmpPipeFile := cluster.GetSegmentPipeFilePath(contentID) + "_temp"
 		/*
 		 * These commands are more complicated than those in ReadFromSegmentPipes
 		 * because in the Read case ssh exits immediately given that there is
@@ -296,7 +297,7 @@ func (cluster *Cluster) WriteToSegmentPipes() {
 		 * for reading.
 		 */
 		if usingCompression {
-			return fmt.Sprintf(`sh -c "nohup sh -c \"(set -o pipefail; trap '' PIPE; tail -n +1 -f %s | %s) > %s < /dev/null 2>/dev/null &\"" < /dev/null > /dev/null 2>&1`, backupFile, decompress, pipeFile)
+			return fmt.Sprintf(`sh -c "nohup sh -c \"(set -o pipefail; trap '' PIPE; mkfifo %s; cat %s | %s > %s | tail -n +1 -f %s) > %s < /dev/null 2>/dev/null &\"" < /dev/null > /dev/null 2>&1`, tmpPipeFile, backupFile, decompress, tmpPipeFile, tmpPipeFile, pipeFile)
 		}
 		return fmt.Sprintf(`sh -c "nohup sh -c \"(trap '' PIPE; tail -n +1 -f %s) > %s < /dev/null 2>/dev/null &\"" < /dev/null > /dev/null 2>&1`, backupFile, pipeFile)
 	})
