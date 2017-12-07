@@ -224,7 +224,8 @@ func (cluster *Cluster) CleanUpSegmentPipesOnAllHosts() {
 	logger.Verbose("Cleaning up segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		pipePath := cluster.GetSegmentPipeFilePath(contentID)
-		return fmt.Sprintf("rm -f %s* && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9", pipePath, pipePath)
+		// This cleans up both the pipe itself as well as any gpbackup_helper process associated with it
+		return fmt.Sprintf("set -o pipefail; rm -f %s* && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9 || true", pipePath, pipePath)
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
 	numErrors := len(errMap)
