@@ -224,8 +224,9 @@ func (cluster *Cluster) CleanUpSegmentPipesOnAllHosts() {
 	logger.Verbose("Cleaning up segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		pipePath := cluster.GetSegmentPipeFilePath(contentID)
+		scriptPath := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
 		// This cleans up both the pipe itself as well as any gpbackup_helper process associated with it
-		return fmt.Sprintf("set -o pipefail; rm -f %s* && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9 || true", pipePath, pipePath)
+		return fmt.Sprintf("set -o pipefail; rm -f %s* && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9 || true", pipePath, scriptPath)
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
 	numErrors := len(errMap)
@@ -276,6 +277,62 @@ func (cluster *Cluster) CleanUpSegmentTailProcesses() {
 		logger.Verbose("Unable to clean up tail process for segment %d on host %s: %s", contentID, cluster.GetHostForContent(contentID), err.Error())
 	}
 	cluster.LogFatalError("Unable to clean up tail processes", numErrors)
+}
+
+func (cluster *Cluster) WriteToSegmentPipes() {
+	logger.Verbose("Writing to segment data pipes")
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
+		return fmt.Sprintf(`chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, scriptFile)
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID := range errMap {
+		logger.Verbose("Unable to write to data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	}
+	cluster.LogFatalError("Unable to write to segment data pipes", numErrors)
+}
+
+func (cluster *Cluster) CreateSegmentPipeScript() {
+	logger.Verbose("Creating pipe scripts")
+	usingCompression, compressionProgram := GetCompressionParameters()
+	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
+		decompress := compressionProgram.DecompressCommand
+		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
+		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
+		tmpPipeFile := cluster.GetSegmentPipeFilePath(contentID) + "_temp"
+		if usingCompression {
+			return fmt.Sprintf(`cat <<HEREDOC > %s
+#!/bin/bash
+
+set -o pipefail
+trap '' PIPE
+mkfifo %s
+cat %s | %s > %s | tail -n +1 -f %s > %s
+HEREDOC`, scriptFile, tmpPipeFile, backupFile, decompress, tmpPipeFile, tmpPipeFile, pipeFile)
+		}
+		return fmt.Sprintf(`cat <<HEREDOC > %s
+#!/bin/bash
+
+exec > %s
+while true; do
+	cat %s
+done
+HEREDOC`, scriptFile, pipeFile, backupFile)
+	})
+	errMap := cluster.ExecuteClusterCommand(commandMap)
+	numErrors := len(errMap)
+	if numErrors == 0 {
+		return
+	}
+	for contentID := range errMap {
+		logger.Verbose("Unable to create segment script file for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	}
+	cluster.LogFatalError("Unable to create segment script files", numErrors)
 }
 
 func (cluster *Cluster) MoveSegmentTOCsAndMakeReadOnly() {

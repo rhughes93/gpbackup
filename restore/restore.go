@@ -146,6 +146,11 @@ func restoreData(gucStatements []utils.StatementWithType) {
 	if backupConfig.SingleDataFile {
 		globalCluster.CopySegmentTOCs()
 		defer globalCluster.CleanUpSegmentTOCs()
+		globalCluster.CreateSegmentPipesOnAllHosts()
+		globalCluster.CreateSegmentPipeScript()
+		defer globalCluster.CleanUpSegmentPipesOnAllHosts()
+		globalCluster.WriteToSegmentPipes()
+		defer globalCluster.CleanUpSegmentTailProcesses()
 	}
 	logger.Info("Restoring data")
 
