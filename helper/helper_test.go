@@ -105,14 +105,14 @@ dataentries:
 			It("can copy a byte range without seeking", func() {
 				fmt.Fprintln(stdinWrite, "some text")
 				stdinWrite.Close()
-				helper.CopyByteRange(0, 5)
+				helper.CopyByteRange(0, 5, 0)
 				Expect(logfile).To(gbytes.Say("Copying bytes for table with oid 3; discarding next 0 bytes, copying 5 bytes"))
 				Expect(stdout).To(gbytes.Say("some "))
 			})
 			It("can copy a byte range with seeking", func() {
 				fmt.Fprintln(stdinWrite, "some text")
 				stdinWrite.Close()
-				helper.CopyByteRange(3, 5)
+				helper.CopyByteRange(3, 5, 0)
 				Expect(logfile).To(gbytes.Say("Copying bytes for table with oid 3; discarding next 3 bytes, copying 2 bytes"))
 				Expect(stdout).To(gbytes.Say("e "))
 			})
