@@ -160,9 +160,11 @@ func restoreData(gucStatements []utils.StatementWithType) {
 	dataProgressBar.Start()
 
 	if connection.NumConns == 1 {
+		prevEntryOid := uint32(0)
 		for i, entry := range filteredMasterDataEntries {
 			restoreSingleTableData(entry, uint32(i)+1, totalTables, 0)
 			dataProgressBar.Increment()
+			prevEntryOid = entry.Oid
 		}
 	} else {
 		var tableNum uint32 = 1
