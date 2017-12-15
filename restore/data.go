@@ -14,20 +14,18 @@ var (
 	tableDelim = ","
 )
 
-func CopyTableIn(connection *utils.DBConn, tableName string, tableAttributes string, backupFile string, singleDataFile bool, oid uint32, whichConn int) {
+func CopyTableIn(connection *utils.DBConn, tableName string, tableAttributes string, backupFile string, singleDataFile bool, oid uint32, prevOid uint32, whichConn int) {
 	whichConn = connection.ValidateConnNum(whichConn)
 	usingCompression, compressionProgram := utils.GetCompressionParameters()
 	tocFile := globalCluster.GetSegmentTOCFilePath("<SEG_DATA_DIR>", "<SEGID>")
-	helperCommand := fmt.Sprintf("$GPHOME/bin/gpbackup_helper --restore --toc-file=%s --oid=%d --content=<SEGID>", tocFile, oid)
+	helperCommand := fmt.Sprintf("$GPHOME/bin/gpbackup_helper --restore --toc-file=%s --oid=%d --previous-oid=%d --content=<SEGID>", tocFile, oid, prevOid)
 	copyCommand := ""
 	// Error code returned for broken pipe
 	const SIGPIPE = "141"
-	if singleDataFile && usingCompression {
-		copyCommand = fmt.Sprintf(`PROGRAM 'set -o pipefail; %s %s | %s || test $? -eq %s'`, compressionProgram.DecompressCommand, backupFile, helperCommand, SIGPIPE)
+	if singleDataFile {
+		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", helperCommand, backupFile)
 	} else if usingCompression {
 		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", compressionProgram.DecompressCommand, backupFile)
-	} else if singleDataFile {
-		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", helperCommand, backupFile)
 	} else {
 		copyCommand = fmt.Sprintf("'%s'", backupFile)
 	}

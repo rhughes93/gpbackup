@@ -224,7 +224,7 @@ func (cluster *Cluster) CleanUpSegmentPipesOnAllHosts() {
 	logger.Verbose("Cleaning up segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		pipePath := cluster.GetSegmentPipeFilePath(contentID)
-		scriptPath := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
+		scriptPath := pipePath + "_script"
 		// This cleans up both the pipe itself as well as any gpbackup_helper process associated with it
 		return fmt.Sprintf("set -o pipefail; rm -f %s* && ps ux | grep %s | grep -v grep | awk '{print $2}' | xargs kill -9 || true", pipePath, scriptPath)
 	})
@@ -282,7 +282,7 @@ func (cluster *Cluster) CleanUpSegmentTailProcesses() {
 func (cluster *Cluster) WriteToSegmentPipes() {
 	logger.Verbose("Writing to segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
-		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
+		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_pipe_script", contentID, cluster.Timestamp)
 		return fmt.Sprintf(`chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, scriptFile)
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
@@ -303,27 +303,38 @@ func (cluster *Cluster) CreateSegmentPipeScript() {
 		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
 		decompress := compressionProgram.DecompressCommand
 		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
-		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
-		tmpPipeFile := cluster.GetSegmentPipeFilePath(contentID) + "_temp"
+		scriptFile := pipeFile + "_script"
+		//tmpPipeFile := cluster.GetSegmentPipeFilePath(contentID) + "_temp"
 		if usingCompression {
 			return fmt.Sprintf(`cat <<HEREDOC > %s
 #!/bin/bash
 
-set -o pipefail
-trap '' PIPE
-mkfifo %s
-cat %s | %s > %s | tail -n +1 -f %s > %s
-HEREDOC`, scriptFile, tmpPipeFile, backupFile, decompress, tmpPipeFile, tmpPipeFile, pipeFile)
+exec > %s
+while true; do
+	cat %s | %s
+done
+HEREDOC`, scriptFile, pipeFile, backupFile, decompress)
+			/*			return fmt.Sprintf(`cat <<HEREDOC > %s
+						#!/bin/bash
+
+						set -o pipefail
+						trap '' PIPE
+						mkfifo %s
+						cat %s | %s > %s | tail -n +1 -f %s > %s
+						HEREDOC`, scriptFile, tmpPipeFile, backupFile, decompress, tmpPipeFile, tmpPipeFile, pipeFile)
+			*/
 		}
 		return fmt.Sprintf(`cat <<HEREDOC > %s
 #!/bin/bash
 
 exec > %s
+exec < %s
 while true; do
-	cat %s
+	dd bs=8192
 done
 HEREDOC`, scriptFile, pipeFile, backupFile)
 	})
+	fmt.Println(commandMap)
 	errMap := cluster.ExecuteClusterCommand(commandMap)
 	numErrors := len(errMap)
 	if numErrors == 0 {
