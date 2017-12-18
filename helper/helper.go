@@ -5,12 +5,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/greenplum-db/gpbackup/utils"
 )
 
 var (
+	agent   *bool
 	content *int
 	logger  *utils.Logger
 	oid     *uint
@@ -25,7 +30,10 @@ var (
 
 func DoHelper() {
 	InitializeGlobals()
-	if *restore {
+	if *agent {
+		fmt.Println("agent")
+		doAgent()
+	} else if *restore {
 		doRestoreHelper()
 	} else {
 		doBackupHelper()
@@ -33,6 +41,7 @@ func DoHelper() {
 }
 
 func InitializeGlobals() {
+	agent = flag.Bool("agent", false, "Use gpbackup_helper as an agent")
 	content = flag.Int("content", -2, "Content ID of the corresponding segment")
 	logger = utils.InitializeLogging("gpbackup_helper", "")
 	oid = flag.Uint("oid", 0, "Oid of the table being processed")
@@ -90,6 +99,63 @@ func ReadAndCountBytes() uint64 {
 	reader := bufio.NewReader(utils.System.Stdin)
 	numBytes, _ := io.Copy(utils.System.Stdout, reader)
 	return uint64(numBytes)
+}
+
+/*
+ * Backup helper functions
+ */
+
+func checkerror(total int, err error) {
+	if err != nil && !strings.Contains(err.Error(), "broken pipe") {
+		fmt.Println("Read", total, "bytes")
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func doAgent() {
+	toc := utils.NewSegmentTOC(*tocFile)
+	byteRanges := GetOrderedOidBounds(toc)
+	lastByte := uint64(0)
+
+	readHandle, err := os.Open("/tmp/input")
+	utils.CheckError(err)
+	reader := bufio.NewReader(readHandle)
+
+	for _, byteRange := range byteRanges {
+		fmt.Println("table start")
+		time.Sleep(100 * time.Millisecond)
+		writeHandle, err := os.OpenFile("/tmp/output", os.O_WRONLY, os.ModeNamedPipe)
+		utils.CheckError(err)
+		writer := bufio.NewWriter(writeHandle)
+
+		start := byteRange.StartByte
+		end := byteRange.EndByte
+		fmt.Println("bounds: start", start, "end", end)
+		reader.Discard(int(start - lastByte))
+		fmt.Println("discarded", start-lastByte)
+
+		io.CopyN(writer, reader, int64(end-start))
+		err = writer.Flush()
+		utils.CheckError(err)
+		fmt.Println("read", end-start)
+		err = writeHandle.Close()
+		utils.CheckError(err)
+		lastByte = end
+	}
+}
+
+func GetOrderedOidBounds(toc *utils.SegmentTOC) []utils.SegmentDataEntry {
+	oids := make([]int, 0)
+	entries := make([]utils.SegmentDataEntry, len(toc.DataEntries))
+	for oid := range toc.DataEntries {
+		oids = append(oids, int(oid))
+	}
+	sort.Ints(oids)
+	for i, oid := range oids {
+		entries[i] = toc.DataEntries[uint(oid)]
+	}
+	return entries
 }
 
 /*
