@@ -282,68 +282,19 @@ func (cluster *Cluster) CleanUpSegmentTailProcesses() {
 func (cluster *Cluster) WriteToSegmentPipes() {
 	logger.Verbose("Writing to segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
-		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_pipe_script", contentID, cluster.Timestamp)
-		return fmt.Sprintf(`chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, scriptFile)
+		tocFile := cluster.GetSegmentTOCFilePath(cluster.SegDirMap[contentID], fmt.Sprintf("%d", contentID))
+		return fmt.Sprintf(`nohup $GPHOME/bin/gpbackup_helper --agent --toc-file %s < /dev/null > /dev/null 2>&1 &`, tocFile)
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
+	fmt.Println(commandMap)
 	numErrors := len(errMap)
 	if numErrors == 0 {
 		return
 	}
-	for contentID := range errMap {
-		logger.Verbose("Unable to write to data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	for contentID, err := range errMap {
+		logger.Verbose("Unable to write to data pipe for segment %d on host %s with error %s", contentID, cluster.GetHostForContent(contentID), err)
 	}
 	cluster.LogFatalError("Unable to write to segment data pipes", numErrors)
-}
-
-func (cluster *Cluster) CreateSegmentPipeScript() {
-	logger.Verbose("Creating pipe scripts")
-	usingCompression, compressionProgram := GetCompressionParameters()
-	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
-		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
-		decompress := compressionProgram.DecompressCommand
-		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
-		scriptFile := pipeFile + "_script"
-		//tmpPipeFile := cluster.GetSegmentPipeFilePath(contentID) + "_temp"
-		if usingCompression {
-			return fmt.Sprintf(`cat <<HEREDOC > %s
-#!/bin/bash
-
-exec > %s
-while true; do
-	cat %s | %s
-done
-HEREDOC`, scriptFile, pipeFile, backupFile, decompress)
-			/*			return fmt.Sprintf(`cat <<HEREDOC > %s
-						#!/bin/bash
-
-						set -o pipefail
-						trap '' PIPE
-						mkfifo %s
-						cat %s | %s > %s | tail -n +1 -f %s > %s
-						HEREDOC`, scriptFile, tmpPipeFile, backupFile, decompress, tmpPipeFile, tmpPipeFile, pipeFile)
-			*/
-		}
-		return fmt.Sprintf(`cat <<HEREDOC > %s
-#!/bin/bash
-
-exec > %s
-exec < %s
-while true; do
-	dd bs=8192
-done
-HEREDOC`, scriptFile, pipeFile, backupFile)
-	})
-	fmt.Println(commandMap)
-	errMap := cluster.ExecuteClusterCommand(commandMap)
-	numErrors := len(errMap)
-	if numErrors == 0 {
-		return
-	}
-	for contentID := range errMap {
-		logger.Verbose("Unable to create segment script file for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
-	}
-	cluster.LogFatalError("Unable to create segment script files", numErrors)
 }
 
 func (cluster *Cluster) MoveSegmentTOCsAndMakeReadOnly() {
