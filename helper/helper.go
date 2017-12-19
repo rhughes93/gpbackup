@@ -15,13 +15,15 @@ import (
 )
 
 var (
-	agent   *bool
-	content *int
-	logger  *utils.Logger
-	oid     *uint
-	prevOid *uint
-	restore *bool
-	tocFile *string
+	agent    *bool
+	content  *int
+	dataFile *string
+	logger   *utils.Logger
+	oid      *uint
+	pipeFile *string
+	prevOid  *uint
+	restore  *bool
+	tocFile  *string
 )
 
 /*
@@ -48,6 +50,8 @@ func InitializeGlobals() {
 	prevOid = flag.Uint("previous-oid", 0, "Oid of the previous table restored")
 	restore = flag.Bool("restore", false, "Read in table according to offset in table of contents file")
 	tocFile = flag.String("toc-file", "", "Absolute path to the table of contents file")
+	pipeFile = flag.String("pipe-file", "", "Absolute path to the pipe file")
+	dataFile = flag.String("data-file", "", "Absolute path to the data file")
 	flag.Parse()
 	utils.InitializeSystemFunctions()
 }
@@ -118,14 +122,14 @@ func doAgent() {
 	byteRanges := GetOrderedOidBounds(toc)
 	lastByte := uint64(0)
 
-	readHandle, err := os.Open("/tmp/input")
+	readHandle, err := os.Open(*dataFile)
 	utils.CheckError(err)
 	reader := bufio.NewReader(readHandle)
 
 	for _, byteRange := range byteRanges {
 		fmt.Println("table start")
 		time.Sleep(100 * time.Millisecond)
-		writeHandle, err := os.OpenFile("/tmp/output", os.O_WRONLY, os.ModeNamedPipe)
+		writeHandle, err := os.OpenFile(*pipeFile, os.O_WRONLY, os.ModeNamedPipe)
 		utils.CheckError(err)
 		writer := bufio.NewWriter(writeHandle)
 

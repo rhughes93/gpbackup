@@ -283,7 +283,15 @@ func (cluster *Cluster) WriteToSegmentPipes() {
 	logger.Verbose("Writing to segment data pipes")
 	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
 		tocFile := cluster.GetSegmentTOCFilePath(cluster.SegDirMap[contentID], fmt.Sprintf("%d", contentID))
-		return fmt.Sprintf(`nohup $GPHOME/bin/gpbackup_helper --agent --toc-file %s < /dev/null > /dev/null 2>&1 &`, tocFile)
+		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
+		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
+		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
+		return fmt.Sprintf(`cat << HEREDOC > %s
+#!/bin/bash
+$GPHOME/bin/gpbackup_helper --agent --toc-file %s --pipe-file %s --data-file %s
+HEREDOC
+
+chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, tocFile, pipeFile, backupFile, scriptFile, scriptFile)
 	})
 	errMap := cluster.ExecuteClusterCommand(commandMap)
 	fmt.Println(commandMap)

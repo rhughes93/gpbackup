@@ -6,6 +6,7 @@ package restore
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/greenplum-db/gpbackup/utils"
 )
@@ -18,13 +19,17 @@ func CopyTableIn(connection *utils.DBConn, tableName string, tableAttributes str
 	whichConn = connection.ValidateConnNum(whichConn)
 	usingCompression, compressionProgram := utils.GetCompressionParameters()
 	copyCommand := ""
-	if usingCompression && !singleDataFile {
+	if singleDataFile {
+		copyCommand = fmt.Sprintf("PROGRAM 'cat %s'", backupFile)
+	} else if usingCompression && !singleDataFile {
 		copyCommand = fmt.Sprintf("PROGRAM '%s < %s'", compressionProgram.DecompressCommand, backupFile)
 	} else {
 		copyCommand = fmt.Sprintf("'%s'", backupFile)
 	}
 	query := fmt.Sprintf("COPY %s%s FROM %s WITH CSV DELIMITER '%s' ON SEGMENT;", tableName, tableAttributes, copyCommand, tableDelim)
+	fmt.Println(query)
 	_, err := connection.Exec(query, whichConn)
+	time.Sleep(1000 * time.Second)
 	if err != nil {
 		logger.Fatal(err, "Error loading data into table %s", tableName)
 	}
