@@ -6,6 +6,7 @@ package restore
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/greenplum-db/gpbackup/utils"
 )
@@ -27,6 +28,7 @@ func CopyTableIn(connection *utils.DBConn, tableName string, tableAttributes str
 	}
 	query := fmt.Sprintf("COPY %s%s FROM %s WITH CSV DELIMITER '%s' ON SEGMENT;", tableName, tableAttributes, copyCommand, tableDelim)
 	fmt.Println(query)
+	time.Sleep(1000 * time.Second)
 	_, err := connection.Exec(query, whichConn)
 	if err != nil {
 		logger.Fatal(err, "Error loading data into table %s", tableName)

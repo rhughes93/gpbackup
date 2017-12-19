@@ -158,6 +158,7 @@ func GetOrderedOidBounds(toc *utils.SegmentTOC) []utils.SegmentDataEntry {
 		oids = append(oids, int(oid))
 	}
 	sort.Ints(oids)
+	fmt.Println(oids)
 	for i, oid := range oids {
 		entries[i] = toc.DataEntries[uint(oid)]
 	}
