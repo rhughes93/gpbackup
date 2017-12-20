@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/greenplum-db/gpbackup/utils"
 )
@@ -126,28 +127,32 @@ func doAgent() {
 	reader := bufio.NewReader(readHandle)
 
 	for _, byteRange := range byteRanges {
-		fmt.Println("table start")
+		log("table start")
 		writeHandle, err := os.OpenFile(*pipeFile, os.O_WRONLY, os.ModeNamedPipe)
 		utils.CheckError(err)
 		writer := bufio.NewWriter(writeHandle)
 
 		start := byteRange.StartByte
 		end := byteRange.EndByte
-		fmt.Println("bounds: start", start, "end", end)
+		log(fmt.Sprintf("bounds: start %d end %d lastByte %d", start, end, lastByte))
 		reader.Discard(int(start - lastByte))
-		fmt.Println("discarded", start-lastByte)
+		log(fmt.Sprintf("discarded %d", start-lastByte))
 
 		cmd := exec.Command("dd", fmt.Sprintf("count=%d", end-start), "bs=1")
 		cmd.Stdin = reader
 		cmd.Stdout = writer
 		err = cmd.Run()
 		utils.CheckError(err)
+		output, _ := cmd.CombinedOutput()
+		log(string(output))
 		err = writer.Flush()
 		utils.CheckError(err)
-		fmt.Println("read", end-start)
+		time.Sleep(100 * time.Millisecond)
+		log(fmt.Sprintf("read %d", end-start))
 		err = writeHandle.Close()
 		utils.CheckError(err)
 		lastByte = end
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
