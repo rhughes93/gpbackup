@@ -138,17 +138,12 @@ func doAgent() {
 		reader.Discard(int(start - lastByte))
 		log(fmt.Sprintf("discarded %d", start-lastByte))
 
-		cmd := exec.Command("dd", fmt.Sprintf("count=%d", end-start), "bs=1")
-		cmd.Stdin = reader
-		cmd.Stdout = writer
-		err = cmd.Run()
+		numBytes, err := io.CopyN(writer, reader, int64(end-start))
 		utils.CheckError(err)
-		output, _ := cmd.CombinedOutput()
-		log(string(output))
 		err = writer.Flush()
 		utils.CheckError(err)
 		time.Sleep(100 * time.Millisecond)
-		log(fmt.Sprintf("read %d", end-start))
+		log(fmt.Sprintf("attempted to read %d, actually read %d", end-start, numBytes))
 		err = writeHandle.Close()
 		utils.CheckError(err)
 		lastByte = end
