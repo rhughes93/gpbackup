@@ -158,12 +158,10 @@ func restoreData(gucStatements []utils.StatementWithType) {
 	dataProgressBar.Start()
 
 	if connection.NumConns == 1 {
-		prevEntryOid := uint32(0)
 		fmt.Println(filteredMasterDataEntries)
 		for i, entry := range filteredMasterDataEntries {
-			restoreSingleTableData(entry, uint32(i)+1, totalTables, prevEntryOid, 0)
+			restoreSingleTableData(entry, uint32(i)+1, totalTables, 0)
 			dataProgressBar.Increment()
-			prevEntryOid = entry.Oid
 		}
 	} else {
 		var tableNum uint32 = 1
@@ -174,7 +172,7 @@ func restoreData(gucStatements []utils.StatementWithType) {
 			go func(whichConn int) {
 				setGUCsForConnection(gucStatements, whichConn)
 				for entry := range tasks {
-					restoreSingleTableData(entry, tableNum, totalTables, 0, whichConn)
+					restoreSingleTableData(entry, tableNum, totalTables, whichConn)
 					atomic.AddUint32(&tableNum, 1)
 					dataProgressBar.Increment()
 				}

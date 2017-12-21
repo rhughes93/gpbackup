@@ -142,7 +142,6 @@ func doAgent() {
 		utils.CheckError(err)
 		err = writer.Flush()
 		utils.CheckError(err)
-		time.Sleep(100 * time.Millisecond)
 		log(fmt.Sprintf("attempted to read %d, actually read %d", end-start, numBytes))
 		err = writeHandle.Close()
 		utils.CheckError(err)
