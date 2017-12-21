@@ -28,15 +28,14 @@ var _ = Describe("restore/data tests", func() {
 		})
 		It("will restore a table from a single data file with compression", func() {
 			utils.SetCompressionParameters(true, utils.Compression{Name: "gzip", CompressCommand: "gzip -c -1", DecompressCommand: "gzip -d -c", Extension: ".gz"})
-			execStr := regexp.QuoteMeta("COPY public.foo(i,j) FROM PROGRAM 'cat <SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_pipe | gzip -d -c' WITH CSV DELIMITER ',' ON SEGMENT;")
+			execStr := regexp.QuoteMeta("COPY public.foo(i,j) FROM PROGRAM 'cat <SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_pipe' WITH CSV DELIMITER ',' ON SEGMENT;")
 			mock.ExpectExec(execStr).WillReturnResult(sqlmock.NewResult(10, 0))
 			filename := "<SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_pipe"
 			restore.CopyTableIn(connection, "public.foo", "(i,j)", filename, true, 0)
 		})
 		It("will restore a table from a single data file without compression", func() {
 			utils.SetCompressionParameters(false, utils.Compression{})
-			execStr := regexp.QuoteMeta("COPY public.foo(i,j) FROM PROGRAM 'cat <SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101' WITH CSV DELIMITER ',' ON SEGMENT;")
-			execStr := regexp.QuoteMeta("COPY public.foo(i,j) FROM PROGRAM '$GPHOME/bin/gpbackup_helper --restore --toc-file=<SEG_DATA_DIR>/gpbackup_<SEGID>_20170101010101_toc.yaml --oid=2 --content=<SEGID> < <SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_pipe' WITH CSV DELIMITER ',' ON SEGMENT;")
+			execStr := regexp.QuoteMeta("COPY public.foo(i,j) FROM PROGRAM 'cat <SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_pipe' WITH CSV DELIMITER ',' ON SEGMENT;")
 			mock.ExpectExec(execStr).WillReturnResult(sqlmock.NewResult(10, 0))
 			filename := "<SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_pipe"
 			restore.CopyTableIn(connection, "public.foo", "(i,j)", filename, true, 0)
