@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ var (
 	prevOid  *uint
 	restore  *bool
 	tocFile  *string
+	oidFile  *string
 )
 
 /*
@@ -50,6 +52,7 @@ func InitializeGlobals() {
 	prevOid = flag.Uint("previous-oid", 0, "Oid of the previous table restored")
 	restore = flag.Bool("restore", false, "Read in table according to offset in table of contents file")
 	tocFile = flag.String("toc-file", "", "Absolute path to the table of contents file")
+	oidFile = flag.String("oid-file", "", "Absolute path to the file containing a list of oids to restore")
 	pipeFile = flag.String("pipe-file", "", "Absolute path to the pipe file")
 	dataFile = flag.String("data-file", "", "Absolute path to the data file")
 	flag.Parse()
@@ -117,23 +120,36 @@ func checkerror(total int, err error) {
 	}
 }
 
+func getOidListFromFile() []int {
+	oidStr, err := utils.System.ReadFile(*oidFile)
+	utils.CheckError(err)
+	oidStrList := strings.Split(strings.TrimSpace(fmt.Sprintf("%s", oidStr)), "\n")
+	oidList := make([]int, len(oidStrList))
+	for i, oid := range oidStrList {
+		num, _ := strconv.ParseInt(oid, 10, 32)
+		oidList[i] = int(num)
+	}
+	sort.Ints(oidList)
+	return oidList
+}
+
 func doAgent() {
-	toc := utils.NewSegmentTOC(*tocFile)
-	byteRanges := GetOrderedOidBounds(toc)
+	tocEntries := utils.NewSegmentTOC(*tocFile).DataEntries
 	lastByte := uint64(0)
+	oidList := getOidListFromFile()
 
 	readHandle, err := os.Open(*dataFile)
 	utils.CheckError(err)
 	reader := bufio.NewReader(readHandle)
 
-	for _, byteRange := range byteRanges {
-		log("table start")
+	for _, oid := range oidList {
+		log(fmt.Sprintf("table %d start", oid))
 		writeHandle, err := os.OpenFile(*pipeFile, os.O_WRONLY, os.ModeNamedPipe)
 		utils.CheckError(err)
 		writer := bufio.NewWriter(writeHandle)
 
-		start := byteRange.StartByte
-		end := byteRange.EndByte
+		start := tocEntries[uint(oid)].StartByte
+		end := tocEntries[uint(oid)].EndByte
 		log(fmt.Sprintf("bounds: start %d end %d lastByte %d", start, end, lastByte))
 		reader.Discard(int(start - lastByte))
 		log(fmt.Sprintf("discarded %d", start-lastByte))
@@ -148,20 +164,6 @@ func doAgent() {
 		lastByte = end
 		time.Sleep(100 * time.Millisecond)
 	}
-}
-
-func GetOrderedOidBounds(toc *utils.SegmentTOC) []utils.SegmentDataEntry {
-	oids := make([]int, 0)
-	entries := make([]utils.SegmentDataEntry, len(toc.DataEntries))
-	for oid := range toc.DataEntries {
-		oids = append(oids, int(oid))
-	}
-	sort.Ints(oids)
-	fmt.Println(oids)
-	for i, oid := range oids {
-		entries[i] = toc.DataEntries[uint(oid)]
-	}
-	return entries
 }
 
 /*

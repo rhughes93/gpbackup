@@ -199,7 +199,7 @@ func (cluster *Cluster) CheckClusterError(remoteOutput *RemoteOutput, finalErrMs
 	}
 	for contentID, err := range remoteOutput.Errors {
 		if err != nil {
-			logger.Verbose("%s on segment %d on host %s", messageFunc(contentID), contentID, cluster.GetHostForContent(contentID))
+			logger.Verbose("%s on segment %d on host %s with error %s", messageFunc(contentID), contentID, cluster.GetHostForContent(contentID), err)
 		}
 	}
 	if len(noFatal) == 1 && noFatal[0] == true {
@@ -275,29 +275,50 @@ func (cluster *Cluster) CleanUpSegmentTailProcesses() {
 }
 
 func (cluster *Cluster) WriteToSegmentPipes() {
-	logger.Verbose("Writing to segment data pipes")
-	commandMap := cluster.GenerateSSHCommandMapForSegments(func(contentID int) string {
+	remoteOutput := cluster.GenerateAndExecuteCommand("Writing to segment data pipes", func(contentID int) string {
 		tocFile := cluster.GetSegmentTOCFilePath(cluster.SegDirMap[contentID], fmt.Sprintf("%d", contentID))
+		oidFile := cluster.GetSegmentOidFilePath(contentID)
 		scriptFile := fmt.Sprintf("/tmp/gpbackup_%d_%s_script", contentID, cluster.Timestamp)
 		pipeFile := cluster.GetSegmentPipeFilePath(contentID)
 		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
 		return fmt.Sprintf(`cat << HEREDOC > %s
 #!/bin/bash
-/usr/local/gpdb/bin/gpbackup_helper --agent --toc-file %s --pipe-file %s --data-file %s
+/usr/local/gpdb/bin/gpbackup_helper --agent --toc-file %s --oid-file %s --pipe-file %s --data-file %s
 HEREDOC
 
-chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, tocFile, pipeFile, backupFile, scriptFile, scriptFile)
+chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, tocFile, oidFile, pipeFile, backupFile, scriptFile, scriptFile)
 	})
-	errMap := cluster.ExecuteClusterCommand(commandMap)
-	fmt.Println(commandMap)
-	numErrors := len(errMap)
-	if numErrors == 0 {
-		return
+	cluster.CheckClusterError(remoteOutput, "Unable to write to segment data pipes", func(contentID int) string {
+		return fmt.Sprintf("Unable to write to data pipe for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	})
+}
+
+func (cluster *Cluster) WriteOidListToSegments(filteredEntries []MasterDataEntry) {
+	filteredOids := make([]string, len(filteredEntries))
+	for i, entry := range filteredEntries {
+		filteredOids[i] = fmt.Sprintf("%d", entry.Oid)
 	}
-	for contentID, err := range errMap {
-		logger.Verbose("Unable to write to data pipe for segment %d on host %s with error %s", contentID, cluster.GetHostForContent(contentID), err)
-	}
-	cluster.LogFatalError("Unable to write to segment data pipes", numErrors)
+	oidStr := strings.Join(filteredOids, "\\n")
+	remoteOutput := cluster.GenerateAndExecuteCommand("Writing filtered oid list to segments", func(contentID int) string {
+		oidFile := cluster.GetSegmentOidFilePath(contentID)
+		return fmt.Sprintf(`echo "%s" > %s`, oidStr, oidFile)
+	})
+	cluster.CheckClusterError(remoteOutput, "Unable to write oid list to segments", func(contentID int) string {
+		return fmt.Sprintf("Unable to write oid list for segment %d on host %s", contentID, cluster.GetHostForContent(contentID))
+	})
+}
+
+func (cluster *Cluster) CleanUpOidFilesOnAllHosts() {
+	remoteOutput := cluster.GenerateAndExecuteCommand("Removing oid list from segment data directories", func(contentID int) string {
+		oidFile := cluster.GetSegmentOidFilePath(contentID)
+		return fmt.Sprintf("rm %s", oidFile)
+	})
+	errMsg := fmt.Sprintf("Unable to remove segment oid file(s). See %s for a complete list of segments with errors and remove manually.",
+		logger.GetLogFilePath())
+	cluster.CheckClusterError(remoteOutput, errMsg, func(contentID int) string {
+		tocFile := cluster.GetSegmentTOCFilePath(cluster.SegDirMap[contentID], fmt.Sprintf("%d", contentID))
+		return fmt.Sprintf("Unable to remove oid file %s on segment %d on host %s", tocFile, contentID, cluster.GetHostForContent(contentID))
+	}, true)
 }
 
 func (cluster *Cluster) MoveSegmentTOCsAndMakeReadOnly() {
@@ -459,6 +480,10 @@ func (cluster *Cluster) GetConfigFilePath() string {
  */
 func (cluster *Cluster) GetSegmentTOCFilePath(topDir string, contentStr string) string {
 	return path.Join(topDir, fmt.Sprintf("gpbackup_%s_%s_toc.yaml", contentStr, cluster.Timestamp))
+}
+
+func (cluster *Cluster) GetSegmentOidFilePath(contentID int) string {
+	return path.Join(cluster.SegDirMap[contentID], fmt.Sprintf("gpbackup_%d_%s_oids", contentID, cluster.Timestamp))
 }
 
 func (cluster *Cluster) VerifyMetadataFilePaths(dataOnly bool, withStats bool) {
