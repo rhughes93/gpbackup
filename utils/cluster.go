@@ -283,7 +283,7 @@ func (cluster *Cluster) WriteToSegmentPipes() {
 		backupFile := cluster.GetTableBackupFilePath(contentID, 0, true)
 		return fmt.Sprintf(`cat << HEREDOC > %s
 #!/bin/bash
-/usr/local/gpdb/bin/gpbackup_helper --agent --toc-file %s --oid-file %s --pipe-file %s --data-file %s
+$GPHOME/bin/gpbackup_helper --agent --toc-file %s --oid-file %s --pipe-file %s --data-file %s
 HEREDOC
 
 chmod +x %s; (nohup %s > /dev/null 2>&1 &) &`, scriptFile, tocFile, oidFile, pipeFile, backupFile, scriptFile, scriptFile)
